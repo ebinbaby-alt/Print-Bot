@@ -24,6 +24,9 @@ app.post('/slack/events', async (req, res) => {
   // Always respond 200 OK immediately to Slack
   res.status(200).send('OK');
 
+  // Ignore Slack automatic retries to prevent double-printing
+  if (req.headers['x-slack-retry-num']) return;
+
   const event = req.body.event;
 
   // 2. Filter: Ignore bot messages & ensure files exist
@@ -66,7 +69,7 @@ app.post('/slack/events', async (req, res) => {
     const pdfBuffer = Buffer.from(pdfResponse.data);
 
     // 6. Extract Address & Parse Postage Instructions via Gemini
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
     const prompt = `
       Analyze the attached PDF and extract the delivery address. Format it strictly as JSON with these exact keys:
       - "name": The recipient's full name.

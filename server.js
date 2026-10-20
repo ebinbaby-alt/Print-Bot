@@ -69,8 +69,8 @@ app.post('/slack/events', async (req, res) => {
     const pdfBuffer = Buffer.from(pdfResponse.data);
 
     // 6. Extract Address & Parse Postage Instructions via Gemini
-    // Switched to gemini-2.5-flash to resolve 404 errors
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    // Updated to gemini-3.8-flash
+    const model = genAI.getGenerativeModel({ model: "gemini-3.8-flash" });
     const prompt = `
       Analyze the attached PDF and extract the delivery address. Format it strictly as JSON with these exact keys:
       - "name": The recipient's full name.
@@ -119,56 +119,4 @@ app.post('/slack/events', async (req, res) => {
     form.append('file', pdfBuffer, { filename: 'document.pdf', contentType: 'application/pdf' });
 
     const printResponse = await axios.post('https://api.intelliprint.net/v1/prints', form, {
-      headers: { ...form.getHeaders(), 'Authorization': `Bearer ${INTELLIPRINT_KEY}` }
-    });
-
-    // 8. Post Final Confirmation & Tracking Info
-    const printId = printResponse.data?.id || printResponse.data?.print_id || 'Submitted';
-    
-    // Check if IntelliPrint returned a tracking number/link in the immediate payload
-    const trackingInfo = printResponse.data?.tracking_number || printResponse.data?.tracking_url || printResponse.data?.tracking_link;
-    let successMessage = `✅ Print Job Submitted Successfully!\n*Job ID:* ${printId}\n*Postage:* ${addressData.postage_service}`;
-    
-    if (trackingInfo) {
-      successMessage += `\n📦 *Tracking:* ${trackingInfo}`;
-    } else if (addressData.postage_service.includes('tracked') || addressData.postage_service.includes('special')) {
-      successMessage += `\n📦 *Tracking:* Will be assigned by Royal Mail upon dispatch.`;
-    }
-
-    await axios.post('https://slack.com/api/chat.postMessage', {
-      channel: channel,
-      thread_ts: threadTs,
-      text: successMessage
-    }, { headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}` } });
-
-    // 9. Log Transaction to Airtable
-    if (AIRTABLE_KEY && AIRTABLE_BASE_ID) {
-      await axios.post(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Print%20Logs`, {
-        records: [{
-          fields: {
-            "Print ID": String(printId),
-            "Requester": String(event.user),
-            "Recipient Name": String(addressData.name || 'Unknown'),
-            "Type of Postage": String(addressData.postage_service || 'uk_second_class'),
-            "Status": "Submitted",
-            "Date of Request": new Date().toISOString(),
-            "Slack Thread TS": String(threadTs)
-          }
-        }]
-      }, {
-        headers: { 'Authorization': `Bearer ${AIRTABLE_KEY}`, 'Content-Type': 'application/json' }
-      });
-    }
-
-  } catch (error) {
-    console.error('Workflow Error:', error.response?.data || error.message);
-    await axios.post('https://slack.com/api/chat.postMessage', {
-      channel: channel,
-      thread_ts: threadTs,
-      text: `❌ Error processing document: ${error.message}`
-    }, { headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}` } });
-  }
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+      headers: { ...form.getHeaders

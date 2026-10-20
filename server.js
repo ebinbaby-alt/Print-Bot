@@ -69,7 +69,8 @@ app.post('/slack/events', async (req, res) => {
     const pdfBuffer = Buffer.from(pdfResponse.data);
 
     // 6. Extract Address & Parse Postage Instructions via Gemini
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+    // Switched to gemini-1.5-pro to resolve 404 errors
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
     const prompt = `
       Analyze the attached PDF and extract the delivery address. Format it strictly as JSON with these exact keys:
       - "name": The recipient's full name.

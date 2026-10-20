@@ -135,4 +135,36 @@ app.post('/slack/events', async (req, res) => {
       channel: channel,
       thread_ts: threadTs,
       text: successMessage
-    },
+    }, { headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}` } });
+
+    // 9. Log Transaction to Airtable
+    if (AIRTABLE_KEY && AIRTABLE_BASE_ID) {
+      await axios.post(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Print%20Logs`, {
+        records: [{
+          fields: {
+            "Print ID": String(printId),
+            "Requester": String(event.user),
+            "Recipient Name": String(addressData.name || 'Unknown'),
+            "Type of Postage": String(addressData.postage_service || 'uk_second_class'),
+            "Status": "Submitted",
+            "Date of Request": new Date().toISOString(),
+            "Slack Thread TS": String(threadTs)
+          }
+        }]
+      }, {
+        headers: { 'Authorization': `Bearer ${AIRTABLE_KEY}`, 'Content-Type': 'application/json' }
+      });
+    }
+
+  } catch (error) {
+    console.error('Workflow Error:', error.response?.data || error.message);
+    await axios.post('https://slack.com/api/chat.postMessage', {
+      channel: channel,
+      thread_ts: threadTs,
+      text: `❌ Error processing document: ${error.message}`
+    }, { headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}` } });
+  }
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

@@ -7,9 +7,11 @@ const app = express();
 app.use(express.json());
 
 // Load Environment Variables
-const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN; // xoxb-...
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;   // AI key
-const INTELLIPRINT_KEY = process.env.INTELLIPRINT_KEY; // API Key
+const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const INTELLIPRINT_KEY = process.env.INTELLIPRINT_KEY;
+const AIRTABLE_KEY = process.env.AIRTABLE_KEY;
+const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
 
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
@@ -103,6 +105,31 @@ app.post('/slack/events', async (req, res) => {
     }, {
       headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}` }
     });
+
+    // 9. Log Transaction to Airtable
+    if (AIRTABLE_KEY && AIRTABLE_BASE_ID) {
+      await axios.post(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Print%20Logs`, {
+        records: [
+          {
+            fields: {
+              "Print ID": String(printId),
+              "Requester": String(event.user),
+              "Recipient Name": String(addressData.name || 'Unknown'),
+              "Type of Postage": String(addressData.postage_service || 'uk_second_class'),
+              "Status": "Submitted",
+              "Date of Request": new Date().toISOString(),
+              "Slack Thread TS": String(threadTs)
+            }
+          }
+        ]
+      }, {
+        headers: {
+          'Authorization': `Bearer ${AIRTABLE_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      console.log('Successfully logged to Airtable');
+    }
 
   } catch (error) {
     console.error('Workflow Execution Error:', error.response?.data || error.message);

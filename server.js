@@ -16,30 +16,21 @@ const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
 app.post('/slack/events', async (req, res) => {
-  // 1. Handle Slack URL Verification Challenge
   if (req.body.type === 'url_verification') {
     return res.json({ challenge: req.body.challenge });
   }
 
-  // Always respond 200 OK immediately to Slack
   res.status(200).send('OK');
 
-  // Ignore Slack automatic retries to prevent double-printing
   if (req.headers['x-slack-retry-num']) return;
 
   const event = req.body.event;
 
-  // 2. Filter: Ignore bot messages & ensure files exist
   if (!event || event.bot_id || event.subtype === 'bot_message') return;
   if (!event.files || event.files.length === 0) return;
 
-  // --- SECURITY & TRIGGER CHECKS ---
   const MY_SLACK_ID = "U0A11N56YDC";
-  
-  // Only allow you to use the bot
   if (event.user !== MY_SLACK_ID) return;
-  
-  // Require the message to contain the word "print"
   if (!event.text || !event.text.toLowerCase().includes('print')) return;
 
   const channel = event.channel;
@@ -47,29 +38,24 @@ app.post('/slack/events', async (req, res) => {
   const pdfFile = event.files.find(f => f.mimetype === 'application/pdf') || event.files[0];
 
   try {
-    // 3. Add 👀 Reaction via Bot Account
     await axios.post('https://slack.com/api/reactions.add', {
       channel: channel,
       timestamp: threadTs,
       name: 'eyes'
     }, { headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}` } });
 
-    // 4. Send Initial In-Thread Waiting Status Message
     await axios.post('https://slack.com/api/chat.postMessage', {
       channel: channel,
       thread_ts: threadTs,
       text: "⌛ Processing request, extracting details, and submitting to IntelliPrint..."
     }, { headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}` } });
 
-    // 5. Download Private PDF Document from Slack
     const pdfResponse = await axios.get(pdfFile.url_private, {
       headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}` },
       responseType: 'arraybuffer'
     });
     const pdfBuffer = Buffer.from(pdfResponse.data);
 
-    // 6. Extract Address & Parse Postage Instructions via Gemini
-    // Updated to gemini-3.8-flash
     const model = genAI.getGenerativeModel({ model: "gemini-3.8-flash" });
     const prompt = `
       Analyze the attached PDF and extract the delivery address. Format it strictly as JSON with these exact keys:
@@ -106,13 +92,12 @@ app.post('/slack/events', async (req, res) => {
     const extractedText = geminiResult.response.text().replace(/```json|```/g, '').trim();
     const addressData = JSON.parse(extractedText);
 
-    // 7. Submit to IntelliPrint
     const form = new FormData();
     form.append('type', 'letter');
     form.append('confirmed', 'true');
-    // form.append('testmode', 'true'); // Uncomment if you are testing without sending real mail
     form.append('recipients[0][address][name]', addressData.name || 'Recipient');
     form.append('recipients[0][address][line]', addressData.line || '');
+    form.append('recipients[0][address][address_line1]', addressData.line || '');
     form.append('recipients[0][address][postcode]', addressData.postcode || '');
     form.append('recipients[0][address][country]', addressData.country || 'United Kingdom');
     form.append('postage[service]', addressData.postage_service || 'uk_second_class');
@@ -122,10 +107,7 @@ app.post('/slack/events', async (req, res) => {
       headers: { ...form.getHeaders(), 'Authorization': `Bearer ${INTELLIPRINT_KEY}` }
     });
 
-    // 8. Post Final Confirmation & Tracking Info
     const printId = printResponse.data?.id || printResponse.data?.print_id || 'Submitted';
-    
-    // Check if IntelliPrint returned a tracking number/link in the immediate payload
     const trackingInfo = printResponse.data?.tracking_number || printResponse.data?.tracking_url || printResponse.data?.tracking_link;
     let successMessage = `✅ Print Job Submitted Successfully!\n*Job ID:* ${printId}\n*Postage:* ${addressData.postage_service}`;
     
@@ -141,7 +123,6 @@ app.post('/slack/events', async (req, res) => {
       text: successMessage
     }, { headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}` } });
 
-    // 9. Log Transaction to Airtable
     if (AIRTABLE_KEY && AIRTABLE_BASE_ID) {
       await axios.post(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Print%20Logs`, {
         records: [{
@@ -161,12 +142,33 @@ app.post('/slack/events', async (req, res) => {
     }
 
   } catch (error) {
-    console.error('Workflow Error:', error.response?.data || error.message);
-    await axios.post('https://slack.com/api/chat.postMessage', {
-      channel: channel,
-      thread_ts: threadTs,
-      text: `❌ Error processing document: ${error.message}`
-    }, { headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}` } });
+    let detailedError = error.message;
+    if (error.response && error.response.data) {
+      detailedError = typeof error.response.data === 'object' ? JSON.stringify(error.response.data) : error.response.data;
+    }
+    
+    console.error('Workflow Error:', detailedError);
+    
+    // Silently log the failure to Airtable without pinging Slack
+    if (AIRTABLE_KEY && AIRTABLE_BASE_ID) {
+      try {
+        await axios.post(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Print%20Logs`, {
+          records: [{
+            fields: {
+              "Print ID": `Error: ${detailedError.substring(0, 100)}...`, // Preview the error in the ID field
+              "Requester": String(event.user),
+              "Status": "Failed",
+              "Date of Request": new Date().toISOString(),
+              "Slack Thread TS": String(threadTs)
+            }
+          }]
+        }, {
+          headers: { 'Authorization': `Bearer ${AIRTABLE_KEY}`, 'Content-Type': 'application/json' }
+        });
+      } catch (airtableErr) {
+        console.error('Failed to log error to Airtable:', airtableErr.message);
+      }
+    }
   }
 });
 

@@ -107,7 +107,6 @@ function validateAddress(data) {
 }
 
 function getFullAddress(data) {
-  // Omit the name so it doesn't double up in Google Sheets
   return [data.line, data.postcode, data.country].filter(Boolean).join(', ');
 }
 
@@ -177,6 +176,18 @@ async function slackApi(method, payload) {
 
 async function replyInThread(channel, threadTs, text) {
   return slackApi('chat.postMessage', { channel, thread_ts: threadTs, text });
+}
+
+// Fetches the user's real display name to log in Google Sheets
+async function getUserInfo(userId) {
+  if (!userId) return 'Unknown User';
+  try {
+    const data = await slackApi('users.info', { user: userId });
+    return data.user?.profile?.real_name || data.user?.profile?.display_name || userId;
+  } catch (error) {
+    console.warn('Could not fetch user info for ID:', userId);
+    return userId;
+  }
 }
 
 // ---------- SLACK REQUEST VERIFICATION ----------
@@ -299,7 +310,7 @@ async function processSlackEvent(body) {
 
   const channel = event.channel;
   const threadTs = event.ts;
-  const requester = event.user;
+  const requesterId = event.user;
   const eventMarker = `slack_event_id=${eventKey}`;
 
   let printSubmitted = false;
@@ -309,6 +320,9 @@ async function processSlackEvent(body) {
   let trackingInfo = '';
   let postageCode = '';
   let statusMessageSent = false;
+  
+  // Fetch real name for the tracker
+  let requesterName = await getUserInfo(requesterId);
 
   try {
     if (await findLoggedEvent(eventKey)) {
@@ -367,18 +381,21 @@ async function processSlackEvent(body) {
     let logWarning = '';
     try {
       await logJob({
-        requester, postage: postageCode, printId, recipient: addressData.name, address: fullAddress,
-        status: 'Submitted', notes: [eventMarker, trackingInfo ? `Tracking: ${trackingInfo}` : ''].filter(Boolean).join(' | ')
+        requester: requesterName, // Log real name to Sheets
+        postage: postageCode, 
+        printId, 
+        recipient: addressData.name, 
+        address: fullAddress,
+        status: 'Submitted', 
+        notes: [eventMarker, trackingInfo ? `Tracking: ${trackingInfo}` : ''].filter(Boolean).join(' | ')
       });
     } catch (error) {
       logWarning = ' Google Sheets logging needs attention.';
       console.error('Print submitted, but Sheets logging failed:', error.message);
     }
 
-    let message = `✅ *Print job submitted successfully!*\n*Job ID:* ${printId}\n*Recipient:* ${addressData.name}\n*Postage:* ${postageCode}`;
-    if (trackingInfo) {
-      message += /^https:\/\/\S+$/i.test(trackingInfo) ? `\n*Tracking:* ${trackingInfo}` : `\n*Tracking number:* ${trackingInfo}`;
-    }
+    // Clean, simple success message tagging the user
+    let message = `✅ <@${requesterId}> Print job submitted successfully!`;
     if (logWarning) message += `\n⚠️${logWarning}`;
 
     await replyInThread(channel, threadTs, message);
@@ -387,7 +404,7 @@ async function processSlackEvent(body) {
     console.error('Hard Copy workflow error:', error.message);
 
     if (printSubmitted) {
-      await replyInThread(channel, threadTs, `⚠️ IntelliPrint accepted job ${printId}, but a later step failed. Please check the print tracker before retrying to avoid a duplicate.`).catch(() => {});
+      await replyInThread(channel, threadTs, `⚠️ IntelliPrint accepted the job, but a later step failed. Please check the print tracker before retrying to avoid a duplicate.`).catch(() => {});
       return;
     }
 
@@ -399,7 +416,7 @@ async function processSlackEvent(body) {
 
     try {
       await logJob({ 
-        requester, 
+        requester: requesterName, // Log real name to Sheets on failure too
         postage: postageCode, 
         printId: '', 
         recipient: addressData?.name || '', 
@@ -414,8 +431,8 @@ async function processSlackEvent(body) {
 
     try {
       const text = statusMessageSent 
-        ? `❌ *Print request failed.*\nPlease check the Google Sheet tracker for detailed error information. No successful IntelliPrint submission was confirmed.` 
-        : `❌ *Print request failed.*\nPlease check the Google Sheet tracker for detailed error information.`;
+        ? `❌ <@${requesterId}> Print request failed.\nPlease check the Google Sheet tracker for detailed error information. No successful IntelliPrint submission was confirmed.` 
+        : `❌ <@${requesterId}> Print request failed.\nPlease check the Google Sheet tracker for detailed error information.`;
       
       await replyInThread(channel, threadTs, text);
     } catch (slackError) {

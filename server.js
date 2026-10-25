@@ -61,15 +61,16 @@ const googleAuth = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGL
 const sheets = googleAuth ? google.sheets({ version: 'v4', auth: googleAuth }) : null;
 
 // ---------- POSTAGE MAPPING ----------
+// Updated to match exactly what IntelliPrint requires
 const POSTAGE_SERVICES = {
   'second class': 'uk_second_class',
-  'second class signed for': 'uk_second_class_signed',
+  'second class signed for': 'uk_second_class_signed_for',
   'first class': 'uk_first_class',
-  'first class signed for': 'uk_first_class_signed',
-  'tracked 24': 'uk_tracked_24',
-  'tracked 48': 'uk_tracked_48',
+  'first class signed for': 'uk_first_class_signed_for',
+  'tracked 24': 'tracked_24',
+  'tracked 48': 'tracked_48',
   'special delivery by 9am': 'uk_special_delivery_9am',
-  'special delivery by 1pm': 'uk_special_delivery_1pm',
+  'special delivery by 1pm': 'uk_special_delivery',
   'international': 'international'
 };
 
@@ -285,13 +286,8 @@ async function processSlackEvent(body) {
   const event = body.event;
   const eventKey = getEventKey(body);
 
-  console.log("=== INCOMING SLACK EVENT ===");
-  console.log(JSON.stringify(event, null, 2));
-
-  if (!event || !eventKey || !isAllowed(event)) {
-    console.log("🚫 Event dropped by filters. isAllowed returned false.");
-    return;
-  }
+  if (!event || !eventKey || !isAllowed(event)) return;
+  
   if (inFlightEvents.has(eventKey)) return;
   inFlightEvents.add(eventKey);
 
@@ -389,7 +385,6 @@ async function processSlackEvent(body) {
       return;
     }
 
-    // Capture the full error specifically for Google Sheets
     let detailedSheetError = String(error.message || 'Unknown error');
     if (error.response?.data) {
       detailedSheetError += ' | Details: ' + JSON.stringify(error.response.data);
@@ -405,14 +400,13 @@ async function processSlackEvent(body) {
         address: fullAddress, 
         status: 'Failed', 
         notes: eventMarker, 
-        error: detailedSheetError // Send detailed error to sheets only
+        error: detailedSheetError
       });
     } catch (sheetError) {
       console.error('Could not log failed attempt to Google Sheets:', sheetError.message);
     }
 
     try {
-      // Send a clean, simple error message to the Slack thread
       const text = statusMessageSent 
         ? `❌ *Print request failed.*\nPlease check the Google Sheet tracker for detailed error information. No successful IntelliPrint submission was confirmed.` 
         : `❌ *Print request failed.*\nPlease check the Google Sheet tracker for detailed error information.`;
@@ -422,7 +416,8 @@ async function processSlackEvent(body) {
       console.error('Could not notify Slack about the failure:', slackError.message);
     }
   } finally {
-    inFlightEvents.delete(eventKey);
+    // Keep the event key in memory to prevent ANY future delayed retries
+    setTimeout(() => inFlightEvents.delete(eventKey), 60 * 60 * 1000);
   }
 }
 
@@ -431,7 +426,6 @@ app.post('/slack/events', (req, res) => {
   if (!verifySlackRequest(req)) return res.status(401).send('Invalid Slack signature');
   if (req.body?.type === 'url_verification') return res.json({ challenge: req.body.challenge });
   
-  // Ignore Slack's automatic retries to prevent double processing
   if (req.headers['x-slack-retry-num']) {
     return res.status(200).send('OK');
   }

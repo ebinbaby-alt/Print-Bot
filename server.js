@@ -61,7 +61,6 @@ const googleAuth = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGL
 const sheets = googleAuth ? google.sheets({ version: 'v4', auth: googleAuth }) : null;
 
 // ---------- POSTAGE MAPPING ----------
-// Updated to match exactly what IntelliPrint requires
 const POSTAGE_SERVICES = {
   'second class': 'uk_second_class',
   'second class signed for': 'uk_second_class_signed_for',
@@ -213,9 +212,10 @@ function verifySlackRequest(req) {
 const inFlightEvents = new Set();
 
 function getEventKey(body) {
-  if (body.event_id) return String(body.event_id);
   const event = body.event;
+  // Use channel + ts to deduplicate overlapping events (e.g., app_mention and message.channels)
   if (event?.channel && event?.ts) return `${event.channel}:${event.ts}`;
+  if (body.event_id) return String(body.event_id);
   return null;
 }
 
@@ -416,7 +416,6 @@ async function processSlackEvent(body) {
       console.error('Could not notify Slack about the failure:', slackError.message);
     }
   } finally {
-    // Keep the event key in memory to prevent ANY future delayed retries
     setTimeout(() => inFlightEvents.delete(eventKey), 60 * 60 * 1000);
   }
 }

@@ -182,10 +182,14 @@ async function replyInThread(channel, threadTs, text) {
 async function getUserInfo(userId) {
   if (!userId) return 'Unknown User';
   try {
-    const data = await slackApi('users.info', { user: userId });
-    return data.user?.profile?.real_name || data.user?.profile?.display_name || userId;
+    const response = await axios.get(`https://slack.com/api/users.info?user=${userId}`, {
+      headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}` },
+      timeout: 10000
+    });
+    if (!response.data?.ok) throw new Error(response.data?.error);
+    return response.data.user?.profile?.real_name || response.data.user?.profile?.display_name || userId;
   } catch (error) {
-    console.warn('Could not fetch user info for ID:', userId);
+    console.warn(`Could not fetch user info for ID ${userId}:`, error.message);
     return userId;
   }
 }

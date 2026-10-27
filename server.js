@@ -280,7 +280,8 @@ async function extractAddressAndPostage(pdfBuffers, instruction) {
         role: 'system',
         content: `You are an address extraction assistant. You MUST output ONLY a valid JSON object matching this structure: {"name": "string", "line": "string", "postcode": "string", "country": "string", "postage_service": "string"}. 
 CRITICAL RULES FOR ADDRESS EXTRACTION:
-- Scan through all provided documents to locate the single actual delivery recipient's address. 
+- IGNORE SENDER OR COMPANY ADDRESSES: You must completely ignore letterheads, return addresses, or corporate addresses (e.g., "Fuse Energy Supply Limited", "One Bank Street", "Canary Wharf").
+- Locate the true customer/recipient address to whom the letter is being mailed.
 - "name": The recipient's full name ONLY.
 - "line": The street address, neighborhood, and city/town ONLY. You MUST EXCLUDE the name, postcode, and country from this field to prevent duplication on the printed envelope.
 - "postcode": The postal code ONLY.
